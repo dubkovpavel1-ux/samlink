@@ -20,7 +20,7 @@ import (
 )
 
 // МЕНЯТЬ ПРИ КАЖДОМ РЕЛИЗЕ ВЕРСИИ
-const AppVersion = "1.0.0"
+const AppVersion = "1.0.1"
 
 type UpdateInfo struct {
 	Available      bool   `json:"Available"`
@@ -134,6 +134,60 @@ func isVersionNewer(latest, current string) bool {
 		}
 	}
 	return false
+}
+
+func (a *App) ApplyDNS(primary string, secondary string) string {
+	cmd := fmt.Sprintf(`
+$ErrorActionPreference = 'SilentlyContinue'
+$adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}
+foreach ($adapter in $adapters) {
+    Set-DnsClientServerAddress -InterfaceIndex $adapter.InterfaceIndex -ServerAddresses ('%s','%s')
+}
+`, primary, secondary)
+
+	out, err := runHiddenOutput("powershell",
+		"-NonInteractive", "-NoProfile",
+		"-ExecutionPolicy", "Bypass",
+		"-Command", cmd)
+	if err != nil {
+		return fmt.Sprintf("Ошибка: %v — %s", err, out)
+	}
+	return ""
+}
+
+func (a *App) ResetDNS() string {
+	cmd := `
+$ErrorActionPreference = 'SilentlyContinue'
+$adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}
+foreach ($adapter in $adapters) {
+    Set-DnsClientServerAddress -InterfaceIndex $adapter.InterfaceIndex -ResetServerAddresses
+}
+`
+	out, err := runHiddenOutput("powershell",
+		"-NonInteractive", "-NoProfile",
+		"-ExecutionPolicy", "Bypass",
+		"-Command", cmd)
+	if err != nil {
+		return fmt.Sprintf("Ошибка: %v — %s", err, out)
+	}
+	return ""
+}
+
+func (a *App) GetCurrentDNS() string {
+	cmd := `
+$ErrorActionPreference = 'SilentlyContinue'
+$adapter = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | Select-Object -First 1
+$dns = (Get-DnsClientServerAddress -InterfaceIndex $adapter.InterfaceIndex -AddressFamily IPv4).ServerAddresses
+if ($dns) { $dns[0] } else { "" }
+`
+	out, err := runHiddenOutput("powershell",
+		"-NonInteractive", "-NoProfile",
+		"-ExecutionPolicy", "Bypass",
+		"-Command", cmd)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
 }
 
 type App struct {

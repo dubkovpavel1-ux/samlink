@@ -38,6 +38,26 @@ export namespace main {
 	        this.Uptime = source["Uptime"];
 	    }
 	}
+	export class UpdateInfo {
+	    Available: boolean;
+	    LatestVersion: string;
+	    CurrentVersion: string;
+	    DownloadURL: string;
+	    ReleaseNotes: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Available = source["Available"];
+	        this.LatestVersion = source["LatestVersion"];
+	        this.CurrentVersion = source["CurrentVersion"];
+	        this.DownloadURL = source["DownloadURL"];
+	        this.ReleaseNotes = source["ReleaseNotes"];
+	    }
+	}
 
 }
 

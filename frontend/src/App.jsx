@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import './App.css';
-import { CheckForUpdates, DownloadAndInstall } from "../wailsjs/go/main/App";
-import { GetSystemInfo, RunCommand, GetWindowsUser } from '../wailsjs/go/main/App';
+import { CheckForUpdates, DownloadAndInstall, ApplyDNS, ResetDNS, GetCurrentDNS, GetSystemInfo, RunCommand, GetWindowsUser } from '../wailsjs/go/main/App';
+import samlinkLogo from './icons/sl1.png';
+
 
 const IconCpu    = ({s=18}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/></svg>;
 const IconGpu    = ({s=18}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="7" width="20" height="10" rx="2"/><path d="M6 7V5M10 7V5M14 7V5M18 7V5M6 17v2M10 17v2M14 17v2M18 17v2"/><circle cx="8" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/></svg>;
@@ -19,7 +20,6 @@ const IconPrivacy= ({s=16}) => <svg width={s} height={s} viewBox="0 0 24 24" fil
 const IconService= ({s=16}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>;
 const IconGaming = ({s=16}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 12h4M8 10v4M15 11h2M15 13h2"/></svg>;
 const IconPower  = ({s=16}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18.36 6.64a9 9 0 11-12.73 0M12 2v10"/></svg>;
-import samlinkLogo from './icons/sl1.png';
 
 function UpdateBanner() {
   const [update, setUpdate] = useState(null);
@@ -502,35 +502,39 @@ function DnsTab() {
     const [detecting, setDetecting] = useState(true);
     const [toast, setToast]         = useState('');
 
-    useEffect(() => { detectCurrentDns(); }, []);
+    function showToast(msg) { setToast(msg); setTimeout(() => setToast(''), 3000); }
+
+    useEffect(() => {
+        detectCurrentDns();
+    }, []);
 
     async function detectCurrentDns() {
         setDetecting(true);
         try {
-            const out = await RunCommand(`(Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object {$_.InterfaceAlias -like "*Ethernet*" -or $_.InterfaceAlias -like "*Wi-Fi*"} | Select-Object -First 1).ServerAddresses[0]`);
-            const currentDns = (out || '').trim();
-            const matched = DNS_PRESETS.find(p => p.primary === currentDns);
-            if (matched) setActive(matched.name);
+            const currentDns = await GetCurrentDNS();
+            const matched = DNS_PRESETS.find(p => p.primary === currentDns.trim());
+            setActive(matched ? matched.name : null);
         } catch {}
         finally { setDetecting(false); }
     }
 
-    function showToast(msg) { setToast(msg); setTimeout(() => setToast(''), 3000); }
-
     async function applyDns(preset) {
+        // Если уже активен — сбрасываем
+        if (active === preset.name) {
+            setLoading('reset');
+            try {
+                const err = await ResetDNS();
+                if (err) { showToast(`✗ ${err}`); }
+                else { setActive(null); showToast('✓ DNS сброшен на автоматический'); }
+            } catch (e) { showToast(`✗ ${e.message}`); }
+            finally { setLoading(null); }
+            return;
+        }
+
         setLoading(preset.name);
         try {
-            const cmd = `
-                $interfaces = @("Ethernet", "Wi-Fi", "Ethernet 2", "Беспроводная сеть")
-                foreach ($iface in $interfaces) {
-                    try {
-                        netsh interface ip set dns "$iface" static ${preset.primary} primary 2>$null
-                        netsh interface ip add dns "$iface" ${preset.secondary} index=2 2>$null
-                    } catch {}
-                }
-            `;
-            const err = await RunCommand(cmd);
-            if (err && err.includes('Ошибка')) showToast(`✗ ${err}`);
+            const err = await ApplyDNS(preset.primary, preset.secondary);
+            if (err) { showToast(`✗ ${err}`); }
             else { setActive(preset.name); showToast(`✓ DNS ${preset.name} применён`); }
         } catch (e) { showToast(`✗ ${e.message}`); }
         finally { setLoading(null); }
@@ -545,8 +549,19 @@ function DnsTab() {
                     <p className="tab-desc">
                         Управление DNS · меньше пинг до серверов
                         {detecting && <span style={{opacity:0.5, marginLeft:8}}>· определяем текущий...</span>}
+                        {active && !detecting && <span style={{opacity:0.7, marginLeft:8}}>· активен: {active}</span>}
                     </p>
                 </div>
+                {active && (
+                    <button
+                        className="btn-secondary"
+                        onClick={() => applyDns(DNS_PRESETS.find(p => p.name === active))}
+                        disabled={loading !== null}
+                        style={{ borderColor: 'rgba(255,92,124,0.5)', color: '#ff5c7c', background: 'rgba(255,92,124,0.1)' }}
+                    >
+                        {loading === 'reset' ? <span className="spinner" /> : '✕ Сбросить DNS'}
+                    </button>
+                )}
             </div>
             <div className="dns-list">
                 {DNS_PRESETS.map(p => (
@@ -556,9 +571,14 @@ function DnsTab() {
                             <span className="dns-addr">{p.primary} / {p.secondary}</span>
                             <span className="dns-tag">{p.tag}</span>
                         </div>
-                        <button className={`btn-tweak ${active === p.name ? 'done' : ''}`}
-                            onClick={() => applyDns(p)} disabled={loading === p.name || detecting}>
-                            {loading === p.name ? <span className="spinner" /> : active === p.name ? <><IconCheck /> Активен</> : 'Применить'}
+                        <button
+                            className={`btn-tweak ${active === p.name ? 'done' : ''}`}
+                            onClick={() => applyDns(p)}
+                            disabled={loading !== null || detecting}
+                        >
+                            {loading === p.name ? <span className="spinner" />
+                             : active === p.name ? '✓ Активен (откл.)'
+                             : 'Применить'}
                         </button>
                     </div>
                 ))}
@@ -579,7 +599,7 @@ function SettingsTab() {
             </div>
             <div className="section-box">
                 <div className="section-title">О программе</div>
-                <p className="tab-desc" style={{padding: '12px 0'}}>Samlink System Optimizer · Версия 1.0.0</p>
+                <p className="tab-desc" style={{padding: '12px 0'}}>Samlink System Optimizer · Версия 1.0.1</p>
             </div>
         </div>
     );
